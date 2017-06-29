@@ -13,19 +13,27 @@
 volatile boolean _interrupt = true;
 
 const bool DEBUG = true;
-const int sleepCycluses = 5;//60;
+const int debugSleepCycluses = 5;
+
 const int soilSensorAPin = A4;
 const int soilSensorBPin = A3;
 const int soilSensorCPin = A2;
 const int soilSensorDPin = A1;
 const int soilSensorEPin = A0;
 
-const int numberOfSensors = 5;
-const int soilSensorPins[numberOfSensors] = { A4, A3, A2, A1, A0 };
+
+const int soilSensorPins[] = { A4, A3, A2, A1, A0 };
+const int numberOfSensors = (int)(sizeof(soilSensorPins)/sizeof(int));
+const int wateringHours[] = {8,12,18};
+const int numberOfWateringHours = (int)(sizeof(wateringHours)/sizeof(int));
 
 const int measurementEnablePin = 9;
-const int wateringLevel = 900;
+const int wateringLevel = 850;
+const int minWateringVotesNeeded = (int) floor(numberOfSensors/2)+1;
+
+boolean wateredInThisHour = false;
 int nint = 0;
+int sleepCycluses = 60;
 
 const int kCePin   = 5;  // Chip Enable
 const int kIoPin   = 6;  // Input/Output
@@ -37,21 +45,42 @@ DS1302 rtc(kCePin, kIoPin, kSclkPin);
 
 void setup() {
   Serial.begin(57600);
+  if (DEBUG) {
+    sleepCycluses = debugSleepCycluses;
+    Serial.println("\n\n\n===============================================");
+    Serial.println("System configuration: ");
+    Serial.print("Sleep cycluses: ");
+    Serial.println(sleepCycluses);
+    Serial.print("Number of sensors: ");
+    Serial.println(numberOfSensors);
+    Serial.print("Watering level: ");
+    Serial.println(wateringLevel);
+    Serial.print("Minimal watering votes needed: ");
+    Serial.println(minWateringVotesNeeded);
+    Serial.print("Watering hours: ");
+    for (int i = 0 ; i < numberOfWateringHours; i++){
+      Serial.print(wateringHours[i]);
+      Serial.print(" ");
+    }
+    Serial.println("\nData line header:");
+    Serial.println("Date;SensorA;SensorB;SensorC;SensorD;SensorE;Votes;checkWatering;watering"); 
+    Serial.println("===============================================");
+  }
   pinMode(measurementEnablePin, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
 
-  rtc.writeProtect(false);
-  rtc.halt(false);
-
-  // Make a new time object to set the date and time.
-  // Sunday, September 22, 2013 at 01:38:50.
-  Time t(2017, 6, 29, 19, 20, 05, Time::kMonday);
-
-  // Set the time and date on the chip.
-  //rtc.time(t);
-  rtc.writeProtect(true);
-
+  if (false) {
+    rtc.writeProtect(false);
+    rtc.halt(false);
+  
+    // Make a new time object to set the date and time.
+    Time t(2017, 6, 29, 20, 42, 05, Time::kThursday);
+  
+    // Set the time and date on the chip.
+    rtc.time(t);
+    rtc.writeProtect(true);
+  }
   // CPU Sleep Modes
   // SM2 SM1 SM0 Sleep Mode
   // 0    0  0 Idle
@@ -66,9 +95,12 @@ void setup() {
   cbi( SMCR,SM0 );     // power down mode
   sbi( SMCR,SM1 );     // power down mode
   cbi( SMCR,SM2 );     // power down mode
+  if (DEBUG) {
+    Serial.println("\n\nSetup DONE\n");
+    delay(1000);
+  }
 
   setup_watchdog(6);
-
 }
 
 void loop() {
@@ -101,13 +133,24 @@ void loop() {
         }
       }
       digitalWrite(measurementEnablePin, LOW); // disable soil sensor
-      
-      if (wateringVotes >= 3) {
+      bool checkWatering = false;
+      for (int i = 0 ; i < numberOfWateringHours; i++){
+        if (t.hr == wateringHours[i] ) {
+          if (wateredInThisHour == false) {
+            checkWatering = true;
+          }
+          if (DEBUG) {
+            Serial.print("Watering hour! Check: ");
+            Serial.println(checkWatering);
+          }
+        }
+      }
+      if (wateringVotes >= minWateringVotesNeeded) {
         wateringEnabled = true;
       }
       // Print the formatted string to serial with time and values.
       char buf[50];
-      sprintf(buf, "'%04d-%02d-%02d %02d:%02d:%02d';%d;%d;%d;%d;%d;%d;%d",
+      sprintf(buf, "'%04d-%02d-%02d %02d:%02d:%02d';%d;%d;%d;%d;%d;%d;%d,%d",
              t.yr, t.mon, t.date,
              t.hr, t.min, t.sec,
              soilSensorValues[0],
@@ -116,9 +159,13 @@ void loop() {
              soilSensorValues[3],
              soilSensorValues[4],
              wateringVotes,
-             wateringEnabled
+             checkWatering,
+             wateringEnabled             
       );
       digitalWrite(LED_BUILTIN, LOW);
+      if (DEBUG) {
+        Serial.println("Data line: ");
+      }
       Serial.println(buf);
       if (DEBUG) {
         Serial.println("END LOOP");
