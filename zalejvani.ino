@@ -12,7 +12,7 @@
 
 volatile boolean _interrupt = true;
 
-const bool DEBUG = true;
+const bool DEBUG = false;
 const int debugSleepCycluses = 5;
 
 const int soilSensorAPin = A4;
@@ -24,16 +24,25 @@ const int soilSensorEPin = A0;
 
 const int soilSensorPins[] = { A4, A3, A2, A1, A0 };
 const int numberOfSensors = (int)(sizeof(soilSensorPins)/sizeof(int));
-const int wateringHours[] = {8,12,18};
+
+const int wateringHours[] = {18};
 const int numberOfWateringHours = (int)(sizeof(wateringHours)/sizeof(int));
 
-const int measurementEnablePin = 9;
-const int wateringLevel = 850;
+
+const int soilMeasurementEnablePin = 9;
+const int measurementDelay = 500;
+const int wateringLevel = 800;
+const int wateringDelay = 20000;
 const int minWateringVotesNeeded = (int) floor(numberOfSensors/2)+1;
+
+const int distanceEchoPin = 10;
+const int distanceTrigPin = 11;
+const int relayPin = 12;
 
 boolean wateredInThisHour = false;
 int nint = 0;
-int sleepCycluses = 60;
+int sleepCycluses = 300;
+
 
 const int kCePin   = 5;  // Chip Enable
 const int kIoPin   = 6;  // Input/Output
@@ -43,8 +52,10 @@ const int kSclkPin = 7;  // Serial Clock
 DS1302 rtc(kCePin, kIoPin, kSclkPin);
 
 
+
 void setup() {
   Serial.begin(57600);
+  Serial.println("Starting system...");
   if (DEBUG) {
     sleepCycluses = debugSleepCycluses;
     Serial.println("\n\n\n===============================================");
@@ -57,6 +68,8 @@ void setup() {
     Serial.println(wateringLevel);
     Serial.print("Minimal watering votes needed: ");
     Serial.println(minWateringVotesNeeded);
+    Serial.print("Watering delay: ");
+    Serial.println(wateringDelay);
     Serial.print("Watering hours: ");
     for (int i = 0 ; i < numberOfWateringHours; i++){
       Serial.print(wateringHours[i]);
@@ -66,8 +79,12 @@ void setup() {
     Serial.println("Date;SensorA;SensorB;SensorC;SensorD;SensorE;Votes;checkWatering;watering"); 
     Serial.println("===============================================");
   }
-  pinMode(measurementEnablePin, OUTPUT);
+  pinMode(soilMeasurementEnablePin, OUTPUT);
+  pinMode(distanceTrigPin, OUTPUT);
+  pinMode(distanceEchoPin, INPUT);
+  pinMode(relayPin, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
+  
   digitalWrite(LED_BUILTIN, LOW);
 
   if (false) {
@@ -75,7 +92,7 @@ void setup() {
     rtc.halt(false);
   
     // Make a new time object to set the date and time.
-    Time t(2017, 6, 29, 20, 42, 05, Time::kThursday);
+    Time t(2019, 9, 17, 16, 57, 05, Time::kThursday);
   
     // Set the time and date on the chip.
     rtc.time(t);
@@ -99,7 +116,8 @@ void setup() {
     Serial.println("\n\nSetup DONE\n");
     delay(1000);
   }
-
+  Serial.println("System running");
+  delay(1000);
   setup_watchdog(6);
 }
 
@@ -111,8 +129,8 @@ void loop() {
         Serial.println("LOOP");
       }
       digitalWrite(LED_BUILTIN, HIGH);
-      digitalWrite(measurementEnablePin, HIGH); // enable soil sensor
-      delay(500);
+      digitalWrite(soilMeasurementEnablePin, HIGH); // enable soil sensor
+      delay(measurementDelay);
       nint = 0;
       Time t = rtc.time(); // Get time
       
@@ -132,7 +150,25 @@ void loop() {
           delay(100);
         }
       }
-      digitalWrite(measurementEnablePin, LOW); // disable soil sensor
+      // Mereni vysky hladiny @TODO: refaktoring {{{
+      long duration, distance;
+      digitalWrite(distanceTrigPin, LOW);
+      delayMicroseconds(2);
+      digitalWrite(distanceTrigPin, HIGH);
+      delayMicroseconds(10);
+      digitalWrite(distanceTrigPin, LOW);
+      duration = pulseIn(distanceEchoPin, HIGH);
+      distance = (duration/2) / 29.1;
+      // }}}
+
+      if (DEBUG) {
+        Serial.print("Duration: ");
+        Serial.println(duration);
+        Serial.print("Distance: ");
+        Serial.println(distance);
+      }
+      
+      digitalWrite(soilMeasurementEnablePin, LOW); // disable soil sensor
       bool checkWatering = false;
       for (int i = 0 ; i < numberOfWateringHours; i++){
         if (t.hr == wateringHours[i] ) {
@@ -145,8 +181,14 @@ void loop() {
           }
         }
       }
-      if (wateringVotes >= minWateringVotesNeeded) {
+      if (DEBUG) {
+        checkWatering = true;
+      }
+      if (wateringVotes >= minWateringVotesNeeded && checkWatering == true) {
         wateringEnabled = true;
+      }
+      if (wateringEnabled == true) {
+        watering();
       }
       // Print the formatted string to serial with time and values.
       char buf[50];
@@ -176,7 +218,18 @@ void loop() {
   system_sleep();
 }
 
+void watering() {
+  if (DEBUG) {
+    Serial.println("Watering START...");
+  }
+  digitalWrite(relayPin, HIGH);
+  delay(wateringDelay);
+  if (DEBUG) {
+    Serial.println("Watering STOP");
+  }
+  digitalWrite(relayPin, LOW);
 
+}
 
 //****************************************************************
 // set system into the sleep state
